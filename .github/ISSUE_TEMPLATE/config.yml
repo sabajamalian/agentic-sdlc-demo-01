@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Demo runbook
+    url: https://github.com/sabajamalian/agentic-sdlc-demo-01/blob/main/docs/runbook.md
+    about: How the agentic pipeline works and how to run the demo end to end.

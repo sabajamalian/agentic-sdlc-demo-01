@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src scripts tests notebooks
+
+      - name: Ruff format
+        run: ruff format --check src scripts tests
+
+      - name: Notebooks must not have committed outputs
+        run: nbstripout --verify notebooks/*.ipynb
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Unit tests
+        run: pytest --cov=forecasting --cov-report=term-missing
+
+      - name: Execute notebooks
+        run: pytest --nbmake notebooks -p no:cacheprovider
+
+  eval-gate:
+    name: Model eval gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run backtest
+        run: python scripts/run_backtest.py --plot
+
+      # The gate is allowed to fail here so the metrics still get posted to the
+      # pull request. The "Enforce eval gate" step below is what turns the job red.
+      - name: Check thresholds
+        id: gate
+        continue-on-error: true
+        run: python scripts/check_eval_gate.py
+
+      - name: Upload backtest artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-${{ github.run_id }}
+          path: |
+            reports/metrics.json
+            reports/eval_summary.md
+            reports/mape_by_model.png
+          if-no-files-found: warn
+
+      - name: Comment metrics on the pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- eval-gate-report -->';
+            let body;
+            try {
+              body = marker + '\n' + fs.readFileSync('reports/eval_summary.md', 'utf8');
+            } catch (error) {
+              body = marker + '\n## Model eval gate\n\nThe backtest did not produce a summary. Check the job logs.';
+            }
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find((comment) => comment.body?.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Enforce eval gate
+        if: steps.gate.outcome == 'failure'
+        run: |
+          echo "::error::Model eval gate failed. See the metrics comment on the pull request."
+          exit 1

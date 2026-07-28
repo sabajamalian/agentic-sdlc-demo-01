@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sabajamalian/agentic-sdlc-demo-01/schemas/proposals.schema.json",
+  "title": "Transcript-derived feature proposals",
+  "description": "Contract between the transcript parsing agent and scripts/proposals_to_issue.py. The agent writes this file; deterministic code renders the issue.",
+  "type": "object",
+  "required": ["source_transcript", "proposals"],
+  "additionalProperties": false,
+  "properties": {
+    "source_transcript": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repository-relative path to the transcript this came from."
+    },
+    "meeting_title": {
+      "type": "string",
+      "maxLength": 200
+    },
+    "meeting_date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "proposals": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["title", "problem", "acceptance_criteria", "size"],
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 100
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 20
+          },
+          "acceptance_criteria": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8,
+            "items": { "type": "string", "minLength": 5 }
+          },
+          "suggested_files": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "default": []
+          },
+          "labels": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "default": []
+          },
+          "size": {
+            "type": "string",
+            "enum": ["small", "medium", "large"]
+          },
+          "notes": { "type": "string", "default": "" },
+          "transcript_evidence": { "type": "string", "default": "" }
+        }
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": ["topic", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "topic": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

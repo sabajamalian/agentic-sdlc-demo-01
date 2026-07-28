@@ -1,0 +1,129 @@
+name: 04 - Auto-merge agent pull requests
+
+# The last hop. A human marking the coding agent's draft pull request as
+# "ready for review" is the second human gate in this demo; after that, this
+# workflow enables squash auto-merge and GitHub merges once every required
+# check is green.
+#
+# Deliberately narrow: only pull requests from copilot/* branches, never drafts,
+# and only when CI has actually passed.
+
+on:
+  pull_request:
+    types: [ready_for_review, labeled, reopened]
+  check_suite:
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to enable auto-merge on"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Resolve candidate pull requests
+        id: candidates
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_FROM_EVENT: ${{ github.event.pull_request.number }}
+          PR_FROM_INPUT: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          case "${EVENT_NAME}" in
+            pull_request)     numbers="[${PR_FROM_EVENT}]" ;;
+            workflow_dispatch) numbers="[${PR_FROM_INPUT}]" ;;
+            check_suite)
+              numbers="$(gh api "/repos/${GH_REPO}/commits/${{ github.event.check_suite.head_sha }}/pulls" \
+                --jq '[.[] | select(.state == "open") | .number]' 2>/dev/null || echo '[]')"
+              ;;
+            *) numbers="[]" ;;
+          esac
+
+          echo "candidates: ${numbers}"
+          echo "numbers=${numbers}" >> "$GITHUB_OUTPUT"
+
+      - name: Enable squash auto-merge where eligible
+        if: steps.candidates.outputs.numbers != '[]'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBERS: ${{ steps.candidates.outputs.numbers }}
+        run: |
+          set -euo pipefail
+
+          echo "${NUMBERS}" | jq -r '.[]' | while read -r pr; do
+            [ -n "${pr}" ] || continue
+            echo "::group::PR #${pr}"
+
+            info="$(gh pr view "${pr}" --json number,isDraft,state,headRefName,autoMergeRequest,labels)"
+
+            state="$(echo "${info}" | jq -r '.state')"
+            draft="$(echo "${info}" | jq -r '.isDraft')"
+            branch="$(echo "${info}" | jq -r '.headRefName')"
+            already="$(echo "${info}" | jq -r '.autoMergeRequest != null')"
+            blocked="$(echo "${info}" | jq -r '[.labels[].name] | index("needs-human-review") != null')"
+
+            if [ "${state}" != "OPEN" ]; then
+              echo "Skipping: not open (${state})."; echo "::endgroup::"; continue
+            fi
+            if [ "${draft}" = "true" ]; then
+              echo "Skipping: still a draft. A human marks it ready for review."
+              echo "::endgroup::"; continue
+            fi
+            case "${branch}" in
+              copilot/*) : ;;
+              *) echo "Skipping: ${branch} is not a coding-agent branch."; echo "::endgroup::"; continue ;;
+            esac
+            if [ "${blocked}" = "true" ]; then
+              echo "Skipping: labeled needs-human-review."; echo "::endgroup::"; continue
+            fi
+            if [ "${already}" = "true" ]; then
+              echo "Auto-merge is already enabled."; echo "::endgroup::"; continue
+            fi
+
+            # Do not queue a merge on a pull request whose checks have already failed.
+            failing="$(gh pr checks "${pr}" --json state \
+              --jq '[.[] | select(.state == "FAILURE" or .state == "TIMED_OUT" or .state == "CANCELLED")] | length' \
+              2>/dev/null || echo 0)"
+            if [ "${failing}" != "0" ]; then
+              echo "Skipping: ${failing} check(s) are failing."
+              gh pr edit "${pr}" --add-label needs-human-review || true
+              echo "::endgroup::"; continue
+            fi
+
+            if gh pr merge "${pr}" --squash --auto --delete-branch; then
+              echo "Auto-merge enabled."
+              gh pr edit "${pr}" --add-label auto-merge || true
+              gh pr comment "${pr}" --body "Auto-merge (squash) is enabled. This pull request will merge as soon as every required check passes."
+            else
+              echo "::warning::Could not enable auto-merge on #${pr}. Check that 'Allow auto-merge' and squash merging are enabled in repository settings."
+            fi
+
+            echo "::endgroup::"
+          done
+
+      - name: Job summary
+        if: always()
+        env:
+          NUMBERS: ${{ steps.candidates.outputs.numbers }}
+        run: |
+          {
+            echo "## Auto-merge"
+            echo
+            echo "- Trigger: \`${{ github.event_name }}\`"
+            echo "- Candidates: \`${NUMBERS:-[]}\`"
+            echo
+            echo "Eligibility: open, not a draft, \`copilot/*\` branch, no \`needs-human-review\` label, no failing checks."
+          } >> "$GITHUB_STEP_SUMMARY"
