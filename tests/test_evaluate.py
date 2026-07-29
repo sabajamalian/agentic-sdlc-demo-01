@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
+from forecasting.data import aggregate_total
 from forecasting.evaluate import (
     METRICS,
     backtest,
@@ -12,6 +14,7 @@ from forecasting.evaluate import (
     compare_models,
     mae,
     mape,
+    per_sku_metrics,
     rmse,
     score,
     smape,
@@ -158,3 +161,40 @@ class TestCompareModels:
     def test_includes_every_metric_column(self, daily_series):
         table = compare_models(daily_series, {"mean": {}}, horizon=7, n_splits=2)
         assert set(METRICS) <= set(table.columns)
+
+
+class TestPerSkuMetrics:
+    def test_sorts_worst_first_and_differs_from_aggregate(self):
+        dates = pd.date_range("2024-01-01", periods=28, freq="D")
+        frame = pd.concat(
+            [
+                pd.DataFrame(
+                    {
+                        "date": dates,
+                        "sku": "SKU-STABLE",
+                        "units": np.full(len(dates), 100.0),
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "date": dates,
+                        "sku": "SKU-SWING",
+                        "units": np.where(np.arange(len(dates)) % 2 == 0, 10.0, 200.0),
+                    }
+                ),
+            ],
+            ignore_index=True,
+        )
+
+        by_sku = per_sku_metrics(frame, model="mean", horizon=7, n_splits=2, model_params={"window": 7})
+        total = backtest(
+            aggregate_total(frame),
+            model="mean",
+            horizon=7,
+            n_splits=2,
+            model_params={"window": 7},
+        )
+
+        assert list(by_sku["sku"]) == ["SKU-SWING", "SKU-STABLE"]
+        assert by_sku["mape"].is_monotonic_decreasing
+        assert any(not np.isclose(value, total.metrics["mape"]) for value in by_sku["mape"])
