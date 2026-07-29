@@ -1,0 +1,239 @@
+name: 03 - Pull request review agents
+
+# Two reviewers on every pull request:
+#
+#   A. GitHub's built-in Copilot code review, requested via the REST API.
+#   B. A domain-specific reviewer run with Copilot CLI, looking for the things a
+#      general reviewer will not catch: look-ahead bias, leakage, eval gate
+#      gaming, registry bypasses.
+#
+# The schedule trigger is a safety net. Copilot's own pull requests can hold
+# Actions in an approval-required state, so a periodic sweep picks up anything
+# the pull_request trigger missed during a live demo.
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, synchronize, reopened]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to review"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number || inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Find pull requests to review
+    runs-on: ubuntu-latest
+    outputs:
+      numbers: ${{ steps.find.outputs.numbers }}
+    steps:
+      - name: Resolve targets
+        id: find
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_FROM_EVENT: ${{ github.event.pull_request.number }}
+          PR_FROM_INPUT: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          case "${EVENT_NAME}" in
+            pull_request)
+              numbers="[${PR_FROM_EVENT}]"
+              ;;
+            workflow_dispatch)
+              numbers="[${PR_FROM_INPUT}]"
+              ;;
+            schedule)
+              # Open coding-agent pull requests that no reviewer has touched yet.
+              # The label filter matters: the data science reviewer posts a
+              # comment rather than a formal review, so without it the sweeper
+              # would re-review the same pull request every 30 minutes.
+              numbers="$(gh pr list --state open --limit 20 \
+                --json number,headRefName,reviews,labels \
+                --jq '[.[]
+                       | select(.headRefName | startswith("copilot/"))
+                       | select((.reviews | length) == 0)
+                       | select([.labels[].name] | index("agent-reviewed") | not)
+                       | .number]')"
+              ;;
+            *)
+              numbers="[]"
+              ;;
+          esac
+
+          echo "targets: ${numbers}"
+          echo "numbers=${numbers}" >> "$GITHUB_OUTPUT"
+
+  review:
+    name: Review PR #${{ matrix.pr }}
+    needs: discover
+    if: needs.discover.outputs.numbers != '[]' && needs.discover.outputs.numbers != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        pr: ${{ fromJSON(needs.discover.outputs.numbers) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check out the pull request
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr checkout ${{ matrix.pr }}
+
+      # ----------------------------------------------------------------------
+      # Reviewer A: GitHub's built-in Copilot code review
+      # ----------------------------------------------------------------------
+      - name: Request Copilot code review
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+        run: |
+          set -uo pipefail
+
+          response="$(gh api --method POST \
+            "/repos/${{ github.repository }}/pulls/${{ matrix.pr }}/requested_reviewers" \
+            -f 'reviewers[]=copilot-pull-request-reviewer[bot]' 2>&1)" || true
+
+          if echo "${response}" | grep -qi "error\|not found\|unprocessable"; then
+            echo "::warning::Could not request the built-in Copilot review. It may already be requested, or automatic review is handled by a ruleset."
+            echo "${response}"
+          else
+            echo "Requested copilot-pull-request-reviewer[bot]"
+          fi
+
+      # ----------------------------------------------------------------------
+      # Reviewer B: domain-specific review with Copilot CLI
+      # ----------------------------------------------------------------------
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Copilot CLI
+        run: npm install -g @github/copilot
+
+      - name: Collect the diff
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+        run: |
+          gh pr diff ${{ matrix.pr }} > pr.diff
+          echo "diff size: $(wc -l < pr.diff) lines"
+
+      - name: Run the data science reviewer
+        id: agent
+        continue-on-error: true
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.AGENT_PAT }}
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          PR_NUMBER: ${{ matrix.pr }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
+            echo "::warning::AGENT_PAT is not set, skipping the data science review."
+            {
+              echo "## Data science review"
+              echo
+              echo "Skipped: the \`AGENT_PAT\` secret is not configured, so Copilot CLI"
+              echo "cannot run. See [docs/runbook.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/HEAD/docs/runbook.md)"
+              echo "for the setup steps."
+            } > review.md
+            exit 0
+          fi
+
+          prompt="$(cat .github/agent-prompts/ds-pr-review.md)
+
+          You are reviewing pull request #${PR_NUMBER} in ${GITHUB_REPOSITORY}.
+          The unified diff is saved at ./pr.diff in the current directory.
+          Read it, read the surrounding context in the changed files, and write
+          your review to review.md."
+
+          copilot --yolo -s -p "${prompt}" 2>&1 | tee review-agent-output.txt
+
+      - name: Post the review comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          marker="<!-- ds-review-agent -->"
+
+          if [ -f review.md ] && [ -s review.md ]; then
+            {
+              echo "${marker}"
+              cat review.md
+              echo
+              echo "<sub>Data science reviewer. Complements the built-in Copilot code review, which covers general code quality. [Run](${RUN_URL}).</sub>"
+            } > review_comment.md
+          else
+            {
+              echo "${marker}"
+              echo "## Data science review"
+              echo
+              echo "The reviewer did not produce a review. See the [workflow run](${RUN_URL})."
+            } > review_comment.md
+          fi
+
+          # Replace the previous review from this agent rather than stacking comments.
+          existing="$(gh api "/repos/${GH_REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "[.[] | select(.body | contains(\"${marker}\")) | .id] | first // empty")"
+
+          if [ -n "${existing}" ]; then
+            gh api --method PATCH "/repos/${GH_REPO}/issues/comments/${existing}" \
+              -F body=@review_comment.md >/dev/null
+            echo "Updated review comment ${existing}"
+          else
+            gh pr comment "${PR_NUMBER}" --body-file review_comment.md
+            echo "Posted a new review comment"
+          fi
+
+      - name: Label the pull request as reviewed
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ matrix.pr }}
+        run: |
+          # Self-healing: the label may not exist yet if bootstrap_repo.sh has
+          # not been run. Create it rather than failing the step.
+          gh label create agent-reviewed \
+            --color 0E8A16 \
+            --description "Reviewed by the pull request review agent" 2>/dev/null || true
+
+          gh pr edit "${PR_NUMBER}" --add-label agent-reviewed \
+            || echo "::warning::Could not apply the agent-reviewed label to #${PR_NUMBER}."
+
+      - name: Upload reviewer output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-${{ matrix.pr }}-${{ github.run_id }}
+          path: |
+            review.md
+            review-agent-output.txt
+            pr.diff
+          if-no-files-found: warn
+          retention-days: 14

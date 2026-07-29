@@ -1,0 +1,25 @@
+# Model evaluation gate.
+#
+# CI reads this file and fails the build when the champion model's backtest
+# metrics fall outside these bounds. Raising a threshold is a deliberate,
+# reviewable change: agents are instructed not to loosen it to make a red build
+# go green.
+
+# Absolute ceilings on the champion model's pooled backtest metrics.
+# mape is a fraction, so 0.11 means 11%.
+max_mape: 0.11
+max_mae: 95.0
+max_rmse: 120.0
+
+# The champion must beat the registry baseline (seasonal naive) by at least this
+# much, measured as relative MAPE improvement. 0.02 means "at least 2% better".
+must_beat_baseline: true
+min_relative_improvement: 0.02
+
+# Guard against a model that is accurate on average but systematically high or
+# low. Absolute mean signed error, in units.
+max_abs_bias: 45.0
+
+# Fail if the backtest ran fewer origins than this, which would make the numbers
+# too noisy to trust.
+min_splits: 5

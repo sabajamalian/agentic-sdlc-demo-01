@@ -1,0 +1,109 @@
+name: 02 - Approve proposals and assign Copilot
+
+# Human-in-the-loop gate. A user with write access comments /approve on a
+# Feature Proposals issue; this workflow creates one issue per approved
+# proposal and hands each to the Copilot cloud agent.
+#
+# AGENT_PAT is mandatory here. The Copilot assignment API rejects
+# server-to-server tokens, so the default GITHUB_TOKEN cannot do this.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  approve:
+    name: Create Copilot-assigned issues
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Cheap filters first so unrelated comments never spin up a runner job body.
+    if: >-
+      github.event.issue.pull_request == null &&
+      contains(github.event.issue.labels.*.name, 'feature-proposals') &&
+      startsWith(github.event.comment.body, '/approve')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify AGENT_PAT is configured
+        env:
+          AGENT_PAT: ${{ secrets.AGENT_PAT }}
+        run: |
+          if [ -z "${AGENT_PAT}" ]; then
+            echo "::error::The AGENT_PAT secret is not set. See docs/runbook.md."
+            exit 1
+          fi
+
+      - name: React to the approval comment
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+        run: |
+          gh api --method POST \
+            "/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" \
+            -f content=eyes || true
+
+      - name: Create issues and assign the coding agent
+        id: approve
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python scripts/approve_proposals.py \
+            --event "${GITHUB_EVENT_PATH}" \
+            --base-branch "${{ github.event.repository.default_branch }}" \
+            --summary-out approval_comment.md \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Report the result on the proposals issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTCOME: ${{ steps.approve.outcome }}
+        run: |
+          set -euo pipefail
+
+          if [ "${OUTCOME}" = "success" ] && [ -f approval_comment.md ]; then
+            gh issue comment "${ISSUE_NUMBER}" --body-file approval_comment.md
+          else
+            gh issue comment "${ISSUE_NUMBER}" --body "$(printf '%s\n' \
+              "Approval failed. Nothing was created." \
+              "" \
+              "See the [workflow run](${RUN_URL}) for the error." \
+              "" \
+              "Common causes: you do not have write access, the proposal numbers are" \
+              "out of range, or the machine-readable block at the bottom of this issue" \
+              "was edited.")"
+          fi
+
+      - name: Close the proposals issue when everything was approved
+        if: steps.approve.outputs.all_approved == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AGENT_PAT }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue close "${{ github.event.issue.number }}" \
+            --reason completed \
+            --comment "All proposals approved and handed to the Copilot cloud agent."
+
+      - name: Job summary
+        if: always()
+        env:
+          CREATED: ${{ steps.approve.outputs.created_count }}
+        run: |
+          {
+            echo "## Proposal approval"
+            echo
+            echo "- Proposals issue: #${{ github.event.issue.number }}"
+            echo "- Approved by: @${{ github.event.comment.user.login }}"
+            echo "- Issues created: ${CREATED:-0}"
+          } >> "$GITHUB_STEP_SUMMARY"
