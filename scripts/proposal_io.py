@@ -8,6 +8,7 @@ issue.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,25 @@ _MAX_REPORTED_NUMBERS = 10
 
 class ProposalError(ValueError):
     """Raised when agent output cannot be turned into usable proposals."""
+
+
+def source_link(path: str, repo: str | None = None) -> str:
+    """Markdown linking to ``path`` in the repository, as an absolute URL.
+
+    Relative links in issue and PR comments are resolved by the browser against
+    the current page, so ``../blob/HEAD/x`` is right on ``/o/r/pull/1`` but
+    wrong on ``/o/r/pull/1/files``. An absolute URL renders correctly wherever
+    the comment ends up.
+
+    Falls back to a plain code span when the repository is unknown, which keeps
+    local dry runs readable instead of emitting a dead link.
+    """
+    repo = repo or os.environ.get("GITHUB_REPOSITORY", "")
+    if not repo:
+        return f"`{path}`"
+
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    return f"[`{path}`]({server}/{repo}/blob/HEAD/{path})"
 
 
 def extract_json(text: str) -> dict[str, Any]:

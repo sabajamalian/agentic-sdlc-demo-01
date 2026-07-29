@@ -25,6 +25,7 @@ from proposal_io import (
     ProposalError,
     embed_payload,
     load_payload,
+    source_link,
     validate_payload,
 )
 
@@ -50,8 +51,7 @@ def render_body(payload: dict[str, Any], run_url: str | None = None) -> str:
     lines: list[str] = []
 
     lines += [
-        f"Parsed from [`{payload['source_transcript']}`]"
-        f"(../blob/HEAD/{payload['source_transcript']}) by the transcript agent.",
+        f"Parsed from {source_link(payload['source_transcript'])} by the transcript agent.",
         "",
     ]
 

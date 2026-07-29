@@ -34,6 +34,7 @@ from proposal_io import (
     ProposalError,
     parse_embedded_payload,
     parse_selection,
+    source_link,
 )
 
 COPILOT_ASSIGNEE = "copilot-swe-agent[bot]"
@@ -130,8 +131,7 @@ def build_issue_body(
             "",
             f"> {proposal['transcript_evidence']}",
             "",
-            f"Source: [`{payload['source_transcript']}`]"
-            f"(../blob/HEAD/{payload['source_transcript']})",
+            f"Source: {source_link(payload['source_transcript'])}",
             "",
         ]
 

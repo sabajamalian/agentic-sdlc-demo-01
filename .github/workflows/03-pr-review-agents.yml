@@ -153,8 +153,8 @@ jobs:
               echo "## Data science review"
               echo
               echo "Skipped: the \`AGENT_PAT\` secret is not configured, so Copilot CLI"
-              echo "cannot run. See [docs/runbook.md](../blob/HEAD/docs/runbook.md) for"
-              echo "the setup steps."
+              echo "cannot run. See [docs/runbook.md](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/HEAD/docs/runbook.md)"
+              echo "for the setup steps."
             } > review.md
             exit 0
           fi

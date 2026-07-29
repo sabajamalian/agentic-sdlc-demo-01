@@ -268,11 +268,56 @@ class TestParseSelection:
 
 
 # --------------------------------------------------------------------------
+# repo file links
+# --------------------------------------------------------------------------
+
+
+class TestSourceLink:
+    """Links must be absolute.
+
+    A relative link is resolved by the browser against the current page, so
+    ``../blob/HEAD/x`` points somewhere different on ``/o/r/pull/1`` than on
+    ``/o/r/pull/1/files``. Absolute URLs render correctly in both.
+    """
+
+    def test_builds_an_absolute_url_from_the_repo(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+        link = proposal_io.source_link("docs/transcripts/a.md", repo="octo/demo")
+        assert link == (
+            "[`docs/transcripts/a.md`](https://github.com/octo/demo/blob/HEAD/docs/transcripts/a.md)"
+        )
+
+    def test_never_emits_a_relative_link(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+        assert "../" not in proposal_io.source_link("docs/x.md", repo="octo/demo")
+
+    def test_falls_back_to_the_repo_environment_variable(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_SERVER_URL", raising=False)
+        monkeypatch.setenv("GITHUB_REPOSITORY", "octo/from-env")
+        assert "octo/from-env/blob/HEAD/docs/x.md" in proposal_io.source_link("docs/x.md")
+
+    def test_honours_a_github_enterprise_server(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_SERVER_URL", "https://ghe.example.com/")
+        link = proposal_io.source_link("docs/x.md", repo="octo/demo")
+        assert link == "[`docs/x.md`](https://ghe.example.com/octo/demo/blob/HEAD/docs/x.md)"
+
+    def test_degrades_to_a_code_span_without_a_repo(self, monkeypatch):
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+        assert proposal_io.source_link("docs/x.md") == "`docs/x.md`"
+
+
+# --------------------------------------------------------------------------
 # issue rendering
 # --------------------------------------------------------------------------
 
 
 class TestRenderProposalsIssue:
+    def test_transcript_link_is_absolute(self, payload: dict, monkeypatch):
+        monkeypatch.setenv("GITHUB_REPOSITORY", "octo/demo")
+        body = proposals_to_issue.render_body(payload)
+        assert "https://github.com/octo/demo/blob/HEAD/" in body
+        assert "(../blob/HEAD/" not in body
+
     def test_title_counts_proposals(self, payload: dict):
         assert proposals_to_issue.render_title(payload) == (
             "Feature proposals: Forecasting working session (3 proposals)"
