@@ -29,7 +29,7 @@ live demo script.
 
 ```bash
 make install     # venv + dev dependencies
-make check       # lint, 239 tests, notebook execution, eval gate
+make check       # lint, tests, notebook execution, eval gate
 ```
 
 Individual targets:
@@ -100,7 +100,7 @@ scripts/
   bootstrap_repo.sh
 
 notebooks/       01-eda.ipynb, 02-baseline-model.ipynb (outputs stripped, CI enforces it)
-tests/           239 tests covering the library, the scripts and the agent plumbing
+tests/           covers the library, the scripts and the agent plumbing
 ```
 
 Current numbers on the committed dataset: SARIMAX at **9.32% MAPE** against a

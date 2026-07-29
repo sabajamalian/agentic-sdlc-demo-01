@@ -117,7 +117,7 @@ The waits are the good part: that is where you talk about what is happening.
 make check
 ```
 
-Lint, 239 tests, both notebooks executed, and the eval gate. Everything green.
+Lint, the full test suite, both notebooks executed, and the eval gate. Everything green.
 
 Then show the gaps, because these are what the agent is about to fill:
 

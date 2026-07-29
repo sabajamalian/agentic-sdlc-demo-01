@@ -83,6 +83,38 @@ class TestFourierTerms:
         with pytest.raises(ValueError, match="order must be at least 1"):
             add_fourier_terms(daily_series, order=0)
 
+    def test_phase_is_anchored_to_a_fixed_epoch_not_the_frame(self, daily_series):
+        """Regression: a calendar date must encode identically in every fold.
+
+        Anchoring the phase to ``dates.min()`` made the encoding depend on which
+        slice was passed in, so a coefficient learned on one backtest fold meant
+        something different on the next.
+        """
+        early = daily_series.iloc[:120].reset_index(drop=True)
+        late = daily_series.iloc[60:].reset_index(drop=True)
+
+        early_out = add_fourier_terms(early, order=2).set_index("date")
+        late_out = add_fourier_terms(late, order=2).set_index("date")
+
+        shared = early_out.index.intersection(late_out.index)
+        assert len(shared) == 60
+
+        for column in [c for c in early_out.columns if c.startswith("yearly_")]:
+            pd.testing.assert_series_equal(
+                early_out.loc[shared, column],
+                late_out.loc[shared, column],
+            )
+
+    def test_encoding_depends_only_on_the_date(self, daily_series):
+        """The same day encodes the same way even in a one-row frame."""
+        single = daily_series.iloc[[100]].reset_index(drop=True)
+
+        full_out = add_fourier_terms(daily_series, order=1)
+        single_out = add_fourier_terms(single, order=1)
+
+        assert single_out.loc[0, "yearly_sin_1"] == pytest.approx(full_out.loc[100, "yearly_sin_1"])
+        assert single_out.loc[0, "yearly_cos_1"] == pytest.approx(full_out.loc[100, "yearly_cos_1"])
+
 
 class TestLagFeatures:
     def test_lag_holds_the_earlier_value(self, daily_series):

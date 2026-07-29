@@ -17,6 +17,11 @@ from forecasting.data import DATE_COLUMN, TARGET_COLUMN, validate_single_series
 DEFAULT_LAGS: tuple[int, ...] = (1, 7, 14, 28)
 DEFAULT_ROLLING_WINDOWS: tuple[int, ...] = (7, 28)
 
+#: Fixed phase origin for :func:`add_fourier_terms`. Any constant date works;
+#: what matters is that it does not depend on the frame being encoded, so a
+#: given calendar day always maps to the same point on the seasonal cycle.
+FOURIER_EPOCH = pd.Timestamp("2000-01-01")
+
 
 def add_calendar_features(frame: pd.DataFrame, date_column: str = DATE_COLUMN) -> pd.DataFrame:
     """Add features derived purely from the timestamp.
@@ -48,13 +53,20 @@ def add_fourier_terms(
     date_column: str = DATE_COLUMN,
     prefix: str = "yearly",
 ) -> pd.DataFrame:
-    """Add sine/cosine pairs describing a seasonal cycle of ``period`` days."""
+    """Add sine/cosine pairs describing a seasonal cycle of ``period`` days.
+
+    The phase is anchored to :data:`FOURIER_EPOCH`, a fixed calendar date, not
+    to the first row of ``frame``. Anchoring to the frame would make the
+    encoding slice-dependent: the same calendar day would get different sin/cos
+    values in different backtest folds, so coefficients learned on one fold
+    would not mean the same thing on the next.
+    """
     if order < 1:
         raise ValueError(f"order must be at least 1, got {order}")
 
     out = frame.copy()
     dates = pd.to_datetime(out[date_column])
-    elapsed = (dates - dates.min()).dt.days.to_numpy(dtype=float)
+    elapsed = (dates - FOURIER_EPOCH).dt.days.to_numpy(dtype=float)
 
     for k in range(1, order + 1):
         angle = 2.0 * np.pi * k * elapsed / period
