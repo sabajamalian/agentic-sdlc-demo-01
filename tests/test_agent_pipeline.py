@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import approve_proposals
@@ -246,6 +247,24 @@ class TestParseSelection:
 
     def test_only_the_first_line_is_a_command(self):
         assert parse_selection("/approve 1\n/approve 2", total=3) == [1]
+
+    def test_a_huge_range_fails_fast(self):
+        """Comment bodies are untrusted. Bounds are checked before expansion."""
+        started = time.perf_counter()
+        with pytest.raises(ProposalError, match="out of range"):
+            parse_selection("/approve 1-2000000000", total=3)
+        assert time.perf_counter() - started < 1.0
+
+    def test_a_huge_range_does_not_flood_the_error_message(self):
+        with pytest.raises(ProposalError) as info:
+            parse_selection("/approve 1-2000000000", total=3)
+        assert len(str(info.value)) < 200
+
+    def test_many_out_of_range_numbers_are_truncated(self):
+        numbers = ",".join(str(n) for n in range(100, 400))
+        with pytest.raises(ProposalError) as info:
+            parse_selection(f"/approve {numbers}", total=3)
+        assert len(str(info.value)) < 200
 
 
 # --------------------------------------------------------------------------
@@ -531,6 +550,13 @@ class TestRun:
                 token="t",
             )
         assert fake.created_issues == []
+
+    def test_authorises_before_parsing_untrusted_input(self, monkeypatch):
+        """Permission is checked before the comment or issue body is parsed."""
+        monkeypatch.setattr(approve_proposals, "gh_api", FakeGitHub(permission="read"))
+        event = issue_comment_event("/approve 1-2000000000", "no payload here at all")
+        with pytest.raises(ApprovalError, match="requires write access"):
+            run(event, repo="o/r", base_branch="main", token="t")
 
     def test_ignores_issues_without_the_label(self, issue_body: str, fake_github: FakeGitHub):
         event = issue_comment_event("/approve", issue_body, labels=["bug"])

@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from forecasting.data import DATE_COLUMN, TARGET_COLUMN
+from forecasting.data import DATE_COLUMN, TARGET_COLUMN, validate_single_series
 
 DEFAULT_LAGS: tuple[int, ...] = (1, 7, 14, 28)
 DEFAULT_ROLLING_WINDOWS: tuple[int, ...] = (7, 28)
@@ -73,9 +73,14 @@ def add_lag_features(
 
     ``lag_k`` at row ``t`` holds the target from row ``t - k``, so the smallest
     lag decides the shortest horizon the resulting model can honestly forecast.
+
+    Rejects multi-SKU frames: a bare shift over interleaved series would put
+    another SKU's contemporaneous value in this SKU's lag column.
     """
     if any(lag < 1 for lag in lags):
         raise ValueError(f"All lags must be >= 1 to avoid leaking the present, got {lags}")
+
+    validate_single_series(frame)
 
     out = frame.copy()
     for lag in lags:
@@ -93,11 +98,15 @@ def add_rolling_features(
 
     The target is shifted before the window is applied, so the current
     observation is never part of its own summary statistic.
+
+    Rejects multi-SKU frames for the same reason as :func:`add_lag_features`.
     """
     if min_lag < 1:
         raise ValueError(f"min_lag must be >= 1 to avoid leaking the present, got {min_lag}")
     if any(window < 2 for window in windows):
         raise ValueError(f"All rolling windows must be >= 2, got {windows}")
+
+    validate_single_series(frame)
 
     out = frame.copy()
     shifted = out[target_column].shift(min_lag)
@@ -114,7 +123,14 @@ def build_feature_frame(
     fourier_order: int = 3,
     dropna: bool = True,
 ) -> pd.DataFrame:
-    """Run the standard feature pipeline over a single sorted series."""
+    """Run the standard feature pipeline over a single sorted series.
+
+    Raises if handed more than one SKU. Aggregate with ``aggregate_total`` or
+    pick one with ``select_sku`` first; to build features for every SKU, loop
+    and call this once per series.
+    """
+    validate_single_series(frame)
+
     out = frame.sort_values(DATE_COLUMN).reset_index(drop=True)
     out = add_calendar_features(out)
     out = add_fourier_terms(out, order=fourier_order)

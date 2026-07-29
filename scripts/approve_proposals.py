@@ -199,16 +199,17 @@ def run(
     commenter = (comment.get("user") or {}).get("login", "")
     body = comment.get("body", "")
 
+    # Authorise before doing any work on attacker-controlled input.
+    if not skip_permission_check:
+        permission = check_write_access(repo, commenter, token)
+        print(f"@{commenter} has '{permission}' access, approval allowed")
+
     payload = parse_embedded_payload(issue.get("body") or "")
     proposals = payload["proposals"]
     if not proposals:
         raise ApprovalError("This proposals issue contains no proposals.")
 
     selection = parse_selection(body, len(proposals))
-
-    if not skip_permission_check:
-        permission = check_write_access(repo, commenter, token)
-        print(f"@{commenter} has '{permission}' access, approval allowed")
 
     created: list[dict[str, Any]] = []
     for number in selection:

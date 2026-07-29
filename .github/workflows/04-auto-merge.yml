@@ -11,7 +11,11 @@ name: 04 - Auto-merge agent pull requests
 on:
   pull_request:
     types: [ready_for_review, labeled, reopened]
-  check_suite:
+  # Re-evaluate once CI finishes. check_suite is not usable here: GitHub does
+  # not deliver it for suites created by Actions, and every check in this repo
+  # comes from a workflow.
+  workflow_run:
+    workflows: ["CI"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -38,14 +42,15 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_FROM_EVENT: ${{ github.event.pull_request.number }}
           PR_FROM_INPUT: ${{ inputs.pr_number }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
 
           case "${EVENT_NAME}" in
-            pull_request)     numbers="[${PR_FROM_EVENT}]" ;;
+            pull_request)      numbers="[${PR_FROM_EVENT}]" ;;
             workflow_dispatch) numbers="[${PR_FROM_INPUT}]" ;;
-            check_suite)
-              numbers="$(gh api "/repos/${GH_REPO}/commits/${{ github.event.check_suite.head_sha }}/pulls" \
+            workflow_run)
+              numbers="$(gh api "/repos/${GH_REPO}/commits/${RUN_HEAD_SHA}/pulls" \
                 --jq '[.[] | select(.state == "open") | .number]' 2>/dev/null || echo '[]')"
               ;;
             *) numbers="[]" ;;

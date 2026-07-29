@@ -83,7 +83,7 @@ def aggregate_total(frame: pd.DataFrame) -> pd.DataFrame:
 
 def train_test_split(frame: pd.DataFrame, horizon: int) -> Split:
     """Hold out the final ``horizon`` rows as the test set."""
-    _validate_single_series(frame)
+    validate_single_series(frame)
     if horizon <= 0:
         raise ValueError(f"horizon must be positive, got {horizon}")
     if horizon >= len(frame):
@@ -111,7 +111,7 @@ def rolling_origin_splits(
     ``horizon`` observations. Windows never overlap the future, which is what
     makes the resulting metrics honest.
     """
-    _validate_single_series(frame)
+    validate_single_series(frame)
     if horizon <= 0:
         raise ValueError(f"horizon must be positive, got {horizon}")
     if n_splits <= 0:
@@ -144,12 +144,19 @@ def rolling_origin_splits(
         )
 
 
-def _validate_single_series(frame: pd.DataFrame) -> None:
+def validate_single_series(frame: pd.DataFrame) -> None:
+    """Raise unless ``frame`` is one series: one row per date, at most one SKU.
+
+    Anything that shifts, rolls or splits along the time axis needs this. On a
+    multi-SKU frame those operations run across interleaved series and quietly
+    mix one SKU's target into another's features.
+    """
     if DATE_COLUMN not in frame.columns:
         raise ValueError(f"frame is missing the {DATE_COLUMN!r} column")
     if SKU_COLUMN in frame.columns and frame[SKU_COLUMN].nunique() > 1:
         raise ValueError(
-            "Splitting expects a single series. Use select_sku() or aggregate_total() first."
+            "Expected a single series but found "
+            f"{frame[SKU_COLUMN].nunique()} SKUs. Use select_sku() or aggregate_total() first."
         )
     if frame[DATE_COLUMN].duplicated().any():
         raise ValueError("frame contains duplicate dates for a single series")

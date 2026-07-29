@@ -179,3 +179,47 @@ class TestFeatureColumns:
         assert "date" not in columns
         assert "sku" not in columns
         assert columns
+
+
+class TestMultiSeriesGuard:
+    """A bare shift over interleaved SKUs is cross-series leakage, not a lag.
+
+    ``build_feature_frame`` sorts by date only, so on a multi-SKU frame
+    ``lag_1`` for one SKU would hold another SKU's value for the *same* date.
+    The shape and dtypes come out fine, which is exactly why it has to raise.
+    """
+
+    def test_build_feature_frame_rejects_multiple_skus(self, multi_sku_frame):
+        with pytest.raises(ValueError, match="single series"):
+            build_feature_frame(multi_sku_frame)
+
+    def test_add_lag_features_rejects_multiple_skus(self, multi_sku_frame):
+        with pytest.raises(ValueError, match="single series"):
+            add_lag_features(multi_sku_frame)
+
+    def test_add_rolling_features_rejects_multiple_skus(self, multi_sku_frame):
+        with pytest.raises(ValueError, match="single series"):
+            add_rolling_features(multi_sku_frame)
+
+    def test_the_error_names_the_way_out(self, multi_sku_frame):
+        with pytest.raises(ValueError) as info:
+            build_feature_frame(multi_sku_frame)
+        assert "select_sku" in str(info.value)
+        assert "aggregate_total" in str(info.value)
+
+    def test_aggregating_first_works(self, multi_sku_frame):
+        from forecasting.data import aggregate_total
+
+        out = build_feature_frame(aggregate_total(multi_sku_frame))
+        assert not out.empty
+
+    def test_selecting_one_sku_works(self, multi_sku_frame):
+        from forecasting.data import select_sku
+
+        out = build_feature_frame(select_sku(multi_sku_frame, "SKU-A"), dropna=False)
+        assert len(out) == 60
+
+    def test_duplicate_dates_within_one_sku_are_rejected(self, daily_series):
+        doubled = pd.concat([daily_series, daily_series], ignore_index=True)
+        with pytest.raises(ValueError, match="duplicate dates"):
+            build_feature_frame(doubled)

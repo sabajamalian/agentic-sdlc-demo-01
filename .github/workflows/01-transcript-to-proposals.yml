@@ -40,20 +40,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Resolve the transcript to process
         id: transcript
         env:
           INPUT_PATH: ${{ inputs.transcript_path }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
           if [ -n "${INPUT_PATH}" ]; then
             transcript="${INPUT_PATH}"
           else
-            # Newest transcript added or changed in this push.
-            transcript="$(git diff --name-only --diff-filter=AM HEAD^ HEAD -- 'docs/transcripts/*.md' | tail -1)"
+            # Every transcript touched anywhere in this push, not just the last
+            # commit. The paths filter matches the whole push range, so diffing
+            # HEAD^..HEAD would silently find nothing when the transcript is
+            # pushed alongside a follow-up commit.
+            base="${BEFORE_SHA}"
+            if [ -z "${base}" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+              # New branch, or the base commit is not reachable. Diff against the
+              # empty tree so every transcript in the push is considered.
+              base="$(git hash-object -t tree /dev/null)"
+            fi
+
+            transcript="$(git diff --name-only --diff-filter=AM "${base}" "${AFTER_SHA}" \
+              -- 'docs/transcripts/*.md' | tail -1)"
           fi
 
           if [ -z "${transcript}" ]; then

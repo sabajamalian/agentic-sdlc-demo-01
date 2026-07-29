@@ -17,6 +17,10 @@ END_MARKER = "<!-- END_PROPOSALS_JSON -->"
 
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 
+# Cap on how many offending numbers an error message will name. Comment bodies
+# are attacker-controlled; the message is not a place to echo them back at scale.
+_MAX_REPORTED_NUMBERS = 10
+
 
 class ProposalError(ValueError):
     """Raised when agent output cannot be turned into usable proposals."""
@@ -140,6 +144,10 @@ def parse_selection(comment_body: str, total: int) -> list[int]:
     ``/approve``       -> every proposal
     ``/approve 1,3``   -> proposals 1 and 3
     ``/approve 2-4``   -> proposals 2, 3 and 4
+
+    Comment bodies are untrusted, so every number is bounds-checked before any
+    range is expanded. ``/approve 1-2000000000`` must fail instantly rather than
+    allocating its way through the runner's memory.
     """
     first_line = comment_body.strip().splitlines()[0] if comment_body.strip() else ""
     if not first_line.lower().startswith("/approve"):
@@ -150,27 +158,40 @@ def parse_selection(comment_body: str, total: int) -> list[int]:
         return list(range(1, total + 1))
 
     selected: set[int] = set()
+    out_of_range: set[int] = set()
+
+    def take(number: int) -> None:
+        if 1 <= number <= total:
+            selected.add(number)
+        elif len(out_of_range) < _MAX_REPORTED_NUMBERS:
+            out_of_range.add(number)
+
     for token in re.split(r"[,\s]+", argument):
         if not token:
             continue
+
         range_match = re.fullmatch(r"(\d+)\s*-\s*(\d+)", token)
         if range_match:
             low, high = int(range_match.group(1)), int(range_match.group(2))
             if low > high:
                 raise ProposalError(f"Invalid range {token!r}: start is greater than end")
-            selected.update(range(low, high + 1))
+            # Clamp before expanding. Only the overlap with 1..total can ever
+            # be selected, and reporting two offending endpoints is enough.
+            take(low)
+            take(high)
+            selected.update(range(max(low, 1), min(high, total) + 1))
             continue
+
         if not token.isdigit():
             raise ProposalError(
                 f"Could not read {token!r} as a proposal number. "
                 f"Use `/approve`, `/approve 1,3` or `/approve 2-4`."
             )
-        selected.add(int(token))
+        take(int(token))
 
-    out_of_range = sorted(number for number in selected if not 1 <= number <= total)
     if out_of_range:
         raise ProposalError(
-            f"Proposal number(s) {out_of_range} are out of range. This issue has {total}."
+            f"Proposal number(s) {sorted(out_of_range)} are out of range. This issue has {total}."
         )
 
     if not selected:

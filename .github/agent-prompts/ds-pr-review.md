@@ -14,6 +14,10 @@ metrics that collapse in production.
 
 - Does any feature at time `t` read the target at time `t` or later? Every
   target-derived feature must be shifted by at least one step.
+- Was a feature builder handed a multi-SKU frame? A bare `.shift()` or
+  `.rolling()` over interleaved series mixes one SKU's target into another's
+  features. `validate_single_series` guards this; a change that removes or
+  bypasses that guard is a blocking problem.
 - Does a rolling statistic include the current observation? `add_rolling_features`
   shifts before windowing for exactly this reason.
 - Was a scaler, imputer, encoder or aggregate fitted on the full series before

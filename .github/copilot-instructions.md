@@ -44,6 +44,11 @@ Individual targets: `make lint`, `make test`, `make notebooks`, `make backtest`,
 - If you add a feature, add a test that proves it does not read the future.
   `tests/test_features.py` has the pattern: perturb the last target value and
   assert nothing earlier moves.
+- The feature builders operate on **one series at a time** and call
+  `validate_single_series` to enforce it. A bare `.shift()` over a multi-SKU
+  frame does not produce a lag, it produces another SKU's value for the same
+  date. To build features per SKU, loop over `select_sku` and call the builder
+  once per series; keep the guard in place in anything new.
 
 ### Adding a model
 
