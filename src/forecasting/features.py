@@ -128,6 +128,53 @@ def add_rolling_features(
     return out
 
 
+def add_promotion_features(
+    frame: pd.DataFrame,
+    date_column: str = DATE_COLUMN,
+) -> pd.DataFrame:
+    """Add promotion-aware features derived from the on_promotion flag.
+
+    Both outputs are safe at any forecast horizon: the promotion schedule is
+    set by the business approximately six weeks in advance and is genuinely
+    known at forecast time.
+
+    ``on_promotion`` is cast to ``int8`` so tree and linear models use it
+    directly.  ``days_until_next_promotion`` counts calendar days from each
+    row to the nearest upcoming (or current) promotion date; it is ``NaN``
+    when no later promotion exists in the frame.  Neither column reads
+    ``units`` at any point, so there is no target leakage.
+
+    Raises ``ValueError`` if ``on_promotion`` is not a column in ``frame``.
+    """
+    if "on_promotion" not in frame.columns:
+        raise ValueError(
+            "frame is missing the 'on_promotion' column required by add_promotion_features"
+        )
+
+    out = frame.copy()
+    dates = pd.to_datetime(out[date_column])
+    promo_flag = out["on_promotion"].astype(bool)
+
+    # Cast to int8 so feature_columns() and all downstream models handle it uniformly.
+    out["on_promotion"] = promo_flag.astype("int8")
+
+    # days_until_next_promotion: derived only from the promotion schedule, not units.
+    # 0 on a promotion day itself; NaN when no later promotion exists in the frame.
+    promo_dates = dates[promo_flag].sort_values().to_numpy(dtype="datetime64[D]")
+    date_arr = dates.to_numpy(dtype="datetime64[D]")
+
+    if len(promo_dates) == 0:
+        out["days_until_next_promotion"] = np.nan
+    else:
+        idx = np.searchsorted(promo_dates, date_arr, side="left")
+        valid = idx < len(promo_dates)
+        clipped = np.minimum(idx, len(promo_dates) - 1)
+        diffs = (promo_dates[clipped] - date_arr).astype("timedelta64[D]").astype(float)
+        out["days_until_next_promotion"] = np.where(valid, diffs, np.nan)
+
+    return out
+
+
 def build_feature_frame(
     frame: pd.DataFrame,
     lags: tuple[int, ...] = DEFAULT_LAGS,
@@ -148,6 +195,8 @@ def build_feature_frame(
     out = add_fourier_terms(out, order=fourier_order)
     out = add_lag_features(out, lags=lags)
     out = add_rolling_features(out, windows=rolling_windows)
+    if "on_promotion" in out.columns:
+        out = add_promotion_features(out)
     return out.dropna().reset_index(drop=True) if dropna else out
 
 

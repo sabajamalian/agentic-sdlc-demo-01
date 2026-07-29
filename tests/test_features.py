@@ -14,6 +14,7 @@ from forecasting.features import (
     add_calendar_features,
     add_fourier_terms,
     add_lag_features,
+    add_promotion_features,
     add_rolling_features,
     build_feature_frame,
     feature_columns,
@@ -165,6 +166,85 @@ class TestRollingFeatures:
     def test_rejects_windows_below_two(self, daily_series):
         with pytest.raises(ValueError, match="windows must be >= 2"):
             add_rolling_features(daily_series, windows=(1,))
+
+
+class TestPromotionFeatures:
+    def test_adds_expected_columns(self, promotion_series):
+        out = add_promotion_features(promotion_series)
+        assert "on_promotion" in out.columns
+        assert "days_until_next_promotion" in out.columns
+
+    def test_on_promotion_is_numeric(self, promotion_series):
+        out = add_promotion_features(promotion_series)
+        assert pd.api.types.is_numeric_dtype(out["on_promotion"])
+
+    def test_on_promotion_day_days_until_is_zero(self, promotion_series):
+        out = add_promotion_features(promotion_series)
+        promo_rows = out[out["on_promotion"] == 1]
+        assert (promo_rows["days_until_next_promotion"] == 0).all()
+
+    def test_days_until_counts_correctly(self, promotion_series):
+        """Row immediately before the first promo window should be 1 day away."""
+        out = add_promotion_features(promotion_series)
+        # Index 19 is the day before the first promotion window (index 20).
+        assert out.loc[19, "days_until_next_promotion"] == 1.0
+
+    def test_days_until_nan_after_last_promotion(self, promotion_series):
+        """Rows after the last promotion date in the frame have no next promo."""
+        # Remove the final promo day (index 99) so the last promo ends at index 65.
+        series = promotion_series.copy()
+        series.loc[99, "on_promotion"] = False
+        out = add_promotion_features(series)
+        # Rows after index 65 should have NaN.
+        assert out.loc[66:, "days_until_next_promotion"].isna().all()
+
+    def test_perturbing_last_target_does_not_change_earlier_promotion_features(
+        self, promotion_series
+    ):
+        """Promotion features must not depend on the target value.
+
+        Changing ``units`` at the last row (a promotion day) should leave every
+        earlier row's promotion features identical.  This is the look-ahead guard
+        for target-independent exogenous features.
+        """
+        perturbed = promotion_series.copy()
+        perturbed.loc[perturbed.index[-1], "units"] += 10_000.0
+
+        original = add_promotion_features(promotion_series)
+        modified = add_promotion_features(perturbed)
+
+        pd.testing.assert_series_equal(
+            original["on_promotion"].iloc[:-1],
+            modified["on_promotion"].iloc[:-1],
+        )
+        pd.testing.assert_series_equal(
+            original["days_until_next_promotion"].iloc[:-1],
+            modified["days_until_next_promotion"].iloc[:-1],
+        )
+
+    def test_days_until_does_not_require_units_at_future_promotion_date(self, promotion_series):
+        """days_until_next_promotion is derived from the promotion schedule alone.
+
+        Setting future ``units`` to NaN (unknown at forecast time) must not
+        prevent computation, proving the column is a genuinely exogenous input.
+        """
+        unknown_future = promotion_series.copy()
+        # Blank out all units from the second promo window onward.
+        unknown_future.loc[60:, "units"] = np.nan
+
+        out = add_promotion_features(unknown_future)
+        # Rows before the second promo window should still count down correctly.
+        assert out.loc[59, "days_until_next_promotion"] == 1.0
+        assert out.loc[55, "days_until_next_promotion"] == 5.0
+
+    def test_rejects_frame_without_on_promotion(self, daily_series):
+        with pytest.raises(ValueError, match="on_promotion"):
+            add_promotion_features(daily_series)
+
+    def test_original_frame_is_not_mutated(self, promotion_series):
+        before = list(promotion_series.columns)
+        add_promotion_features(promotion_series)
+        assert list(promotion_series.columns) == before
 
 
 class TestBuildFeatureFrame:
