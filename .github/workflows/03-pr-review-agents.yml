@@ -149,6 +149,13 @@ jobs:
 
           if [ -z "${COPILOT_GITHUB_TOKEN}" ]; then
             echo "::warning::AGENT_PAT is not set, skipping the data science review."
+            {
+              echo "## Data science review"
+              echo
+              echo "Skipped: the \`AGENT_PAT\` secret is not configured, so Copilot CLI"
+              echo "cannot run. See [docs/runbook.md](../blob/HEAD/docs/runbook.md) for"
+              echo "the setup steps."
+            } > review.md
             exit 0
           fi
 
@@ -208,7 +215,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.AGENT_PAT || github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh pr edit ${{ matrix.pr }} --add-label agent-reviewed
+          PR_NUMBER: ${{ matrix.pr }}
+        run: |
+          # Self-healing: the label may not exist yet if bootstrap_repo.sh has
+          # not been run. Create it rather than failing the step.
+          gh label create agent-reviewed \
+            --color 0E8A16 \
+            --description "Reviewed by the pull request review agent" 2>/dev/null || true
+
+          gh pr edit "${PR_NUMBER}" --add-label agent-reviewed \
+            || echo "::warning::Could not apply the agent-reviewed label to #${PR_NUMBER}."
 
       - name: Upload reviewer output
         if: always()
