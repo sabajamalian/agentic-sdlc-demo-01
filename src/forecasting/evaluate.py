@@ -14,9 +14,11 @@ import pandas as pd
 
 from forecasting.data import (
     DATE_COLUMN,
+    SKU_COLUMN,
     TARGET_COLUMN,
     Split,
     rolling_origin_splits,
+    select_sku,
 )
 from forecasting.models.base import Forecaster
 from forecasting.registry import get_model
@@ -211,3 +213,24 @@ def compare_models(
         )
         rows.append({"model": name, **result.metrics})
     return pd.DataFrame(rows).sort_values("mape").reset_index(drop=True)
+
+
+def per_sku_metrics(
+    frame: pd.DataFrame,
+    model: str = "seasonal_naive",
+    horizon: int = 14,
+    n_splits: int = 5,
+    model_params: dict[str, object] | None = None,
+) -> pd.DataFrame:
+    """Backtest one model per SKU and return a worst-first MAPE table."""
+    rows: list[dict[str, object]] = []
+    for sku in sorted(frame[SKU_COLUMN].unique()):
+        result = backtest(
+            select_sku(frame, sku),
+            model=model,
+            horizon=horizon,
+            n_splits=n_splits,
+            model_params=model_params,
+        )
+        rows.append({"sku": sku, **result.metrics})
+    return pd.DataFrame(rows).sort_values("mape", ascending=False).reset_index(drop=True)

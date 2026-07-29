@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 from forecasting.data import aggregate_total, load_sales, select_sku
-from forecasting.evaluate import backtest
+from forecasting.evaluate import backtest, per_sku_metrics
 from forecasting.registry import BASELINE_MODEL, available_models
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +56,16 @@ def run(
             n_splits=n_splits,
             model_params=MODEL_PARAMS.get(name, {}),
         )
-        results[name] = result.to_dict()
+        model_result = result.to_dict()
+        if series == "TOTAL":
+            model_result["per_sku"] = per_sku_metrics(
+                frame,
+                model=name,
+                horizon=horizon,
+                n_splits=n_splits,
+                model_params=MODEL_PARAMS.get(name, {}),
+            ).to_dict(orient="records")
+        results[name] = model_result
 
     return {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
