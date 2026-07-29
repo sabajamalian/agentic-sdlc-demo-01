@@ -186,7 +186,9 @@ class TestPerSkuMetrics:
             ignore_index=True,
         )
 
-        by_sku = per_sku_metrics(frame, model="mean", horizon=7, n_splits=2, model_params={"window": 7})
+        by_sku = per_sku_metrics(
+            frame, model="mean", horizon=7, n_splits=2, model_params={"window": 7}
+        )
         total = backtest(
             aggregate_total(frame),
             model="mean",
