@@ -35,6 +35,26 @@ def daily_series() -> pd.DataFrame:
 
 
 @pytest.fixture
+def promotion_series() -> pd.DataFrame:
+    """A 100-day single-SKU series with two promotion windows.
+
+    Promotions run on days 20-25 (indices 20-25) and days 60-65.
+    The last day (index 99) is a promotion day so look-ahead tests can
+    perturb ``units`` there and check that no earlier feature moves.
+    """
+    dates = pd.date_range("2023-01-01", periods=100, freq="D")
+    index = np.arange(100, dtype=float)
+    units = 100.0 + 0.2 * index
+    on_promotion = np.zeros(100, dtype=bool)
+    on_promotion[20:26] = True  # first window
+    on_promotion[60:66] = True  # second window
+    on_promotion[99] = True  # final row is a promo day for the look-ahead test
+    return pd.DataFrame(
+        {"date": dates, "sku": "SKU-TEST", "units": units, "on_promotion": on_promotion}
+    )
+
+
+@pytest.fixture
 def multi_sku_frame() -> pd.DataFrame:
     """Two overlapping SKU series, for aggregation and selection tests."""
     dates = pd.date_range("2023-01-01", periods=60, freq="D")
