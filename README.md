@@ -21,9 +21,8 @@ SARIMAX, a seasonal naive baseline, notebooks, and a MAPE gate in CI. Real data
 science work, so CI has something meaningful to gate on and the reviews have
 something real to catch.
 
-See [`docs/architecture.md`](docs/architecture.md) for the pipeline diagram and
-the design reasoning, and [`docs/runbook.md`](docs/runbook.md) for setup and the
-live demo script.
+See the [`docs/`](docs/README.md) index for development and forecasting guides,
+the pipeline architecture, setup instructions, and the live demo runbook.
 
 ## Quickstart
 
