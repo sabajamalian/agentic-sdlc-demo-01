@@ -6,9 +6,6 @@ name: Post-merge eval
 on:
   push:
     branches: [main]
-  schedule:
-    # Monday 06:00 UTC, to catch drift from dependency updates.
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
