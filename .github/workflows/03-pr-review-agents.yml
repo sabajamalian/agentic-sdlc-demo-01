@@ -7,15 +7,10 @@ name: 03 - Pull request review agents
 #      general reviewer will not catch: look-ahead bias, leakage, eval gate
 #      gaming, registry bypasses.
 #
-# The schedule trigger is a safety net. Copilot's own pull requests can hold
-# Actions in an approval-required state, so a periodic sweep picks up anything
-# the pull_request trigger missed during a live demo.
 
 on:
   pull_request:
     types: [opened, ready_for_review, synchronize, reopened]
-  schedule:
-    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       pr_number:
@@ -55,19 +50,6 @@ jobs:
               ;;
             workflow_dispatch)
               numbers="[${PR_FROM_INPUT}]"
-              ;;
-            schedule)
-              # Open coding-agent pull requests that no reviewer has touched yet.
-              # The label filter matters: the data science reviewer posts a
-              # comment rather than a formal review, so without it the sweeper
-              # would re-review the same pull request every 30 minutes.
-              numbers="$(gh pr list --state open --limit 20 \
-                --json number,headRefName,reviews,labels \
-                --jq '[.[]
-                       | select(.headRefName | startswith("copilot/"))
-                       | select((.reviews | length) == 0)
-                       | select([.labels[].name] | index("agent-reviewed") | not)
-                       | .number]')"
               ;;
             *)
               numbers="[]"
